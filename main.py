@@ -61,7 +61,6 @@ def init_qdrant():
 
 
 # Initialize Sentence Transformer
-@st.cache_resource
 def init_embedding_model():
     return SentenceTransformer('all-MiniLM-L6-v2')
 
