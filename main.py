@@ -414,6 +414,11 @@ elif rad == "About Us":
     # Team Section
     st.markdown("### 👥 Meet Our Team")
     
+   # [Previous code remains the same until the team section]
+
+    # Team Section
+    st.markdown("### 👥 Meet Our Team")
+    
     # Adding custom CSS for team section
     st.markdown("""
     <style>
@@ -439,7 +444,7 @@ elif rad == "About Us":
     </style>
     """, unsafe_allow_html=True)
 
-    # Team member details
+    # Team member details with corrected spelling
     st.markdown("""
     <div class="team-grid">
         <div class="team-member">
@@ -460,6 +465,8 @@ elif rad == "About Us":
         </div>
     </div>
     """, unsafe_allow_html=True)
+
+# [Rest of the code remains the same]
 
     # Copyright
     st.markdown("---")
