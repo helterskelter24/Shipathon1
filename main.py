@@ -265,7 +265,7 @@ if rad == "GUIDANCE AND COUNSELLING":
     #                     "timestamp": datetime.now().strftime("%H:%M")
     #                 })
 
-                    # st.experimental_rerun()
+                    st.experimental_rerun()
 
 elif rad == "COURSES OF STUDY":
     st.title("📖 Course Search and Information")
@@ -345,7 +345,7 @@ elif rad == "COURSES OF STUDY":
     #                     "timestamp": datetime.now().strftime("%H:%M")
     #                 })
 
-                    # st.experimental_rerun()
+                    st.experimental_rerun()
 
 elif rad == "Home":
     st.title("🏠 Welcome to IITD Buddy")
