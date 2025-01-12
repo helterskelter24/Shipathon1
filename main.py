@@ -1,21 +1,19 @@
 import os
-# Set Streamlit configuration before importing streamlit
-os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
-
-import streamlit as st
-import pandas as pd
+import logging
 from datetime import datetime
+import streamlit as st
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from groq import Groq
-import json
-import logging
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Set page configuration
+# Set environment variables for Streamlit
+os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
+
+# Set Streamlit page configuration
 try:
     st.set_page_config(
         page_title="IITD Buddy",
@@ -25,8 +23,9 @@ try:
     )
 except Exception as e:
     logger.error(f"Failed to set page config: {e}")
+    st.error("Failed to set page configuration. Please reload the app.")
 
-# Initialize clients with proper error handling
+# Caching resource initialization
 @st.cache_resource
 def init_qdrant():
     try:
@@ -35,7 +34,7 @@ def init_qdrant():
         return QdrantClient(url=url, api_key=api_key)
     except Exception as e:
         logger.error(f"Failed to initialize Qdrant: {e}")
-        st.error("Failed to initialize search service. Please check your configuration.")
+        st.error("Failed to initialize Qdrant client. Check your configuration.")
         return None
 
 @st.cache_resource
@@ -44,7 +43,7 @@ def init_embedding_model():
         return SentenceTransformer('all-MiniLM-L6-v2')
     except Exception as e:
         logger.error(f"Failed to initialize embedding model: {e}")
-        st.error("Failed to initialize embedding service. Please check your configuration.")
+        st.error("Failed to initialize embedding model. Check your configuration.")
         return None
 
 @st.cache_resource
@@ -54,17 +53,21 @@ def init_groq():
         return Groq(api_key=api_key)
     except Exception as e:
         logger.error(f"Failed to initialize Groq: {e}")
-        st.error("Failed to initialize AI service. Please check your configuration.")
+        st.error("Failed to initialize Groq AI service. Check your configuration.")
         return None
 
-# Initialize services
-client = init_qdrant()
+# Initialize resources
+qdrant_client = init_qdrant()
 embedding_model = init_embedding_model()
 groq_client = init_groq()
+
+# Constants
 COLLECTION_NAME = st.secrets.get("COLLECTION_NAME", "my_books")
 
-# Custom CSS
-st.markdown("""
+
+# Custom CSS styling
+st.markdown(
+    """
     <style>
     .main {
         padding: 2rem;
@@ -86,186 +89,287 @@ st.markdown("""
     }
     .chat-message.assistant {
         background-color: #f0f2f6;
+        font-size: 1.1em;
     }
     .chat-message .timestamp {
         font-size: 0.8rem;
         color: #666;
     }
+    .iitd-logo {
+        position: fixed;
+        top: 1rem;
+        left: 1rem;
+        z-index: 1000;
+    }
+    .structured-response {
+        margin-top: 1rem;
+        padding: 1rem;
+        background-color: #ffffff;
+        border-radius: 0.5rem;
+        border-left: 4px solid #1f77b4;
+    }
+    .section-header {
+        color: #1f77b4;
+        font-weight: bold;
+        margin-top: 0.5rem;
+    }
     </style>
-    """, unsafe_allow_html=True)
+    """,
+    unsafe_allow_html=True
+)
 
-def query_groq_llm(context: str, user_query: str) -> str:
-    """Query Groq LLM with context and user query"""
-    if not groq_client:
-        return "AI service is currently unavailable. Please try again later."
-    
+# Helper functions
+def query_llm(context: str, user_query: str, system_role: str) -> str:
+    """Query Groq LLM for structured responses."""
     try:
         completion = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system", "content": """You are IITD Buddy, an AI assistant for IIT Delhi students. 
-                You help students with course-related queries and provide information about academics at IIT Delhi. 
-                Be concise, friendly, and accurate in your responses."""},
+                {"role": "system", "content": system_role},
                 {"role": "user", "content": f"""
-                Based on the following course information and user query, provide a helpful response:
-                
-                Search Results:
+                Based on the following information and query, provide a helpful response:
+
+                Context:
                 {context}
-                
+
                 User Query: {user_query}
-                
-                Provide a clear, conversational response addressing the query."""}
+
+                Please provide a structured response that addresses the query."""}
             ],
-            temperature=0.3,
+            temperature=1,
             max_tokens=500
         )
         return completion.choices[0].message.content
     except Exception as e:
-        logger.error(f"Groq query error: {e}")
-        return "I encountered an error processing your request. Please try again."
+        return f"I apologize, but I encountered an error: {str(e)}"
 
-def search_courses(query: str):
-    """Search courses in Qdrant and return results"""
-    if not all([client, embedding_model]):
-        logger.error("Search services unavailable")
-        return None, None
-        
+def search_qdrant(client: QdrantClient, collection_name: str, query: str, limit: int = 3):
+    """Search resources in Qdrant."""
     try:
         query_vector = embedding_model.encode(query).tolist()
         hits = client.query_points(
-            collection_name=COLLECTION_NAME,
+            collection_name=collection_name,
             query=query_vector,
-            limit=3
+            limit=limit
         ).points
-        
+
         if hits:
             context = "\n\n".join([
-                f"Course: {hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}\n"
-                f"Credits: {json.dumps(hit.payload.get('credits', {}))}\n"
-                f"Prerequisites: {', '.join(hit.payload.get('prerequisites', []))}\n"
+                f"Resource: {hit.payload['title']}\n"
                 f"Description: {hit.payload.get('description', 'N/A')}"
                 for hit in hits
             ])
             return context, hits
         return None, None
     except Exception as e:
-        logger.error(f"Search error: {e}")
+        st.error(f"Search error: {str(e)}")
         return None, None
 
-# Initialize session state for chat history
+# Initialize session states
 if 'messages' not in st.session_state:
     st.session_state.messages = []
+if 'counselling_messages' not in st.session_state:
+    st.session_state.counselling_messages = []
+
+# IITD logo
+st.markdown(
+    """
+    <div class='iitd-logo'>
+        <img src="https://upload.wikimedia.org/wikipedia/en/6/6d/Indian_Institute_of_Technology_Delhi_Logo.png" width="100">
+    </div>
+    """,
+    unsafe_allow_html=True
+)
 
 # Sidebar navigation
 with st.sidebar:
-    st.image("https://upload.wikimedia.org/wikipedia/en/6/6d/Indian_Institute_of_Technology_Delhi_Logo.png", width=150)
     st.markdown("### Navigation")
-    rad = st.radio("", [
-        "Home",
-        "About Us",
-        "COURSES OF STUDY",
-        "BSW LINKS",
-        "GUIDANCE AND COUNSELLING"
-    ])
+    rad = st.radio("", ["Home", "About Us", "COURSES OF STUDY", "BSW LINKS", "GUIDANCE AND COUNSELLING"])
 
-# Main content area
-if rad == "COURSES OF STUDY":
+# Navigation handling
+if rad == "GUIDANCE AND COUNSELLING":
+    st.title("🤝 Guidance and Counselling")
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.markdown("""
+            ### 🎯 Mental Health and Wellness Resources
+            Get information about counselling services, wellness programs, and support at IIT Delhi.
+        """)
+
+        with st.form("counselling_query_form"):
+            user_query = st.text_input("What would you like to know about counselling services?")
+            submitted = st.form_submit_button("Search 🔍")
+
+            if submitted and user_query:
+                context, hits = search_qdrant(
+                    client=counselling_client,
+                    collection_name=Config.COUNSELLING_COLLECTION,
+                    query=user_query
+                )
+                if context and hits:
+                    llm_response = query_llm(
+                        context,
+                        user_query,
+                        """You are a compassionate counselling advisor at IIT Delhi. Provide supportive, 
+                        understanding responses while maintaining professionalism."""
+                    )
+                    st.markdown("### 💭 Guidance Response")
+                    st.markdown(f"<div class='structured-response'>{llm_response}</div>", unsafe_allow_html=True)
+
+                    st.markdown("### 📚 Related Resources")
+                    for hit in hits:
+                        with st.expander(f"📘 {hit.payload['title']}"):
+                            st.markdown(f"### Resource Information\n{hit.payload.get('description', 'N/A')}")
+
+        st.markdown("""
+            ### 🛑 Emergency Contacts
+            * *IIT Delhi Counselling Service:* [Contact Number]
+            * *24/7 Mental Health Helpline:* [Helpline Number]
+            * *Student Wellness Centre:* [Contact Details]
+        """)
+
+    # with col2:
+    #     st.markdown("### 💭 Wellness Assistant")
+    #
+    #     chat_container = st.container()
+    #     with chat_container:
+    #         for message in st.session_state.counselling_messages:
+    #             st.markdown(f"<div class='chat-message {message['role']}'><div class='timestamp'>{message['timestamp']}</div>{message['content']}</div>", unsafe_allow_html=True)
+    #
+    #     with st.form("counselling_chat_form", clear_on_submit=True):
+    #         chat_input = st.text_input("Ask about wellness resources:")
+    #         if st.form_submit_button("Send"):
+    #             if chat_input:
+    #                 st.session_state.counselling_messages.append({
+    #                     "role": "user",
+    #                     "content": chat_input,
+    #                     "timestamp": datetime.now().strftime("%H:%M")
+    #                 })
+    #
+    #                 context, _ = search_qdrant(
+    #                     client=counselling_client,
+    #                     collection_name=Config.COUNSELLING_COLLECTION,
+    #                     query=chat_input
+    #                 )
+    #                 ai_response = query_llm(
+    #                     context or "",
+    #                     chat_input,
+    #                     """You are a compassionate counselling advisor at IIT Delhi."""
+    #                 ) if context else "I couldn't find specific information. Please contact the wellness center."
+    #
+    #                 st.session_state.counselling_messages.append({
+    #                     "role": "assistant",
+    #                     "content": ai_response,
+    #                     "timestamp": datetime.now().strftime("%H:%M")
+    #                 })
+
+                    # st.experimental_rerun()
+
+elif rad == "COURSES OF STUDY":
     st.title("📖 Course Search and Information")
-    
-    # Course search interface
-    st.markdown("""
-    ### 🔍 Intelligent Course Search
-    Enter your query about courses - ask about prerequisites, content, or get recommendations!
-    """)
-    
-    with st.form("query_form"):
-        user_query = st.text_input("What would you like to know about courses?")
-        col1, col2, col3 = st.columns([1, 1, 1])
-        with col2:
-            submitted = st.form_submit_button("Search 🔍", use_container_width=True)
-        
-        if submitted and user_query:
-            context, hits = search_courses(user_query)
-            if context and hits:
-                llm_response = query_groq_llm(context, user_query)
-                st.markdown("### 🤖 AI Response")
-                st.markdown(f"""
-                <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
-                    {llm_response}
-                </div>
-                """, unsafe_allow_html=True)
-                
-                st.markdown("### 📚 Related Courses")
-                for hit in hits:
-                    with st.expander(f"📘 {hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}"):
-                        st.markdown(f"""
-                        * *Credits:* {json.dumps(hit.payload.get('credits', {}))}\n
-                        * *Prerequisites:* {', '.join(hit.payload.get('prerequisites', []))}\n
-                        \n*Description:*\n{hit.payload.get('description', 'N/A')}
-                        """)
+
+    col1, col2 = st.columns([2, 1])
+
+    with col1:
+        st.markdown("""
+        ### 🔍 Intelligent Course Search
+        Ask detailed questions about courses, prerequisites, or get personalized recommendations!
+        """)
+
+        with st.form("query_form"):
+            user_query = st.text_input("What would you like to know about courses?")
+            submitted = st.form_submit_button("Search 🔍")
+
+            if submitted and user_query:
+                context, hits = search_qdrant(
+                    client=course_client,
+                    collection_name=Config.COURSE_COLLECTION,
+                    query=user_query
+                )
+                if context and hits:
+                    llm_response = query_llm(
+                        context,
+                        user_query,
+                        """You are an academic advisor providing detailed information about courses."""
+                    )
+                    st.markdown("### 🤖 Detailed Course Analysis")
+                    st.markdown(f"<div class='structured-response'>{llm_response}</div>", unsafe_allow_html=True)
+
+                    st.markdown("### 📚 Related Course Details")
+                    for hit in hits:
+                        with st.expander(f"📘 {hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}"):
+                            st.markdown(f"""
+                            ### Course Information
+                            * *Course Code:* {hit.payload['course_code']}
+                            * *Credits:* {json.dumps(hit.payload.get('credits', {}))}
+                            * *Prerequisites:* {', '.join(hit.payload.get('prerequisites', []))}
+
+                            ### Description
+                            {hit.payload.get('description', 'N/A')}
+                            """)
+
+    # with col2:
+    #     st.markdown("### 💭 AI Assistant")
+    #
+    #     chat_container = st.container()
+    #     with chat_container:
+    #         for message in st.session_state.messages:
+    #             st.markdown(f"<div class='chat-message {message['role']}'><div class='timestamp'>{message['timestamp']}</div>{message['content']}</div>", unsafe_allow_html=True)
+    #
+    #     with st.form("chat_input_form", clear_on_submit=True):
+    #         chat_input = st.text_input("Ask me anything:")
+    #         if st.form_submit_button("Send"):
+    #             if chat_input:
+    #                 st.session_state.messages.append({
+    #                     "role": "user",
+    #                     "content": chat_input,
+    #                     "timestamp": datetime.now().strftime("%H:%M")
+    #                 })
+    #
+    #                 context, _ = search_qdrant(
+    #                     client=course_client,
+    #                     collection_name=Config.COURSE_COLLECTION,
+    #                     query=chat_input
+    #                 )
+    #                 ai_response = query_llm(
+    #                     context or "",
+    #                     chat_input,
+    #                     """You are an academic advisor at IIT Delhi."""
+    #                 ) if context else "I couldn't find specific course information. Please try rephrasing your query."
+    #
+    #                 st.session_state.messages.append({
+    #                     "role": "assistant",
+    #                     "content": ai_response,
+    #                     "timestamp": datetime.now().strftime("%H:%M")
+    #                 })
+
+                    # st.experimental_rerun()
 
 elif rad == "Home":
     st.title("🏠 Welcome to IITD Buddy")
     st.markdown("""
     <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
-        <h3>Your AI-Powered Academic Assistant</h3>
-        <p>Get instant answers about courses, academic policies, and more!</p>
+        <h3>Your One-Stop Solution for IIT Delhi Journey</h3>
+        <p>Get instant access to resources, guidance, and support!</p>
     </div>
     """, unsafe_allow_html=True)
-    
+
+    # Create three columns for features
     col1, col2, col3 = st.columns(3)
+
     with col1:
-        st.markdown("### 📚 Course Information")
-        st.info("Get detailed course information and prerequisites")
+        st.markdown("### 📚 Academic Resources")
+        st.info("Access course materials, lecture notes, and past papers")
+
     with col2:
-        st.markdown("### 🤖 AI Assistant")
-        st.info("Chat with our AI for instant academic guidance")
+        st.markdown("### 🎯 Career Guidance")
+        st.info("Connect with mentors and explore opportunities")
+
     with col3:
-        st.markdown("### 📋 Resources")
-        st.info("Access important links and documents")
-
+        st.markdown("### 💡 Student Support")
+        st.info("Get help with academic and personal challenges")
 else:
-    st.title(f"📑 {rad}")
+    st.title(f"📁 {rad}")
     st.markdown("Content coming soon...")
-
-# AI Chatbot (present on all pages)
-st.markdown("---")
-st.markdown("### 🤖 Chat with IITD Buddy")
-
-# Display chat messages
-for message in st.session_state.messages:
-    with st.container():
-        st.markdown(f"""
-        <div class="chat-message {message['role']}">
-            <div class="timestamp">{message['timestamp']}</div>
-            {message['content']}
-        </div>
-        """, unsafe_allow_html=True)
-
-# Chat input
-with st.form("chat_input_form", clear_on_submit=True):
-    chat_input = st.text_input("Ask me anything about courses and academics:", key="chat_input")
-    if st.form_submit_button("Send", use_container_width=True):
-        if chat_input:
-            # Add user message to chat
-            st.session_state.messages.append({
-                "role": "user",
-                "content": chat_input,
-                "timestamp": datetime.now().strftime("%H:%M")
-            })
-            
-            # Search courses and get AI response
-            context, _ = search_courses(chat_input)
-            if context:
-                ai_response = query_groq_llm(context, chat_input)
-            else:
-                ai_response = "I apologize, but I couldn't find specific course information for your query. Could you please rephrase or ask something else?"
-            
-            # Add AI response to chat
-            st.session_state.messages.append({
-                "role": "assistant",
-                "content": ai_response,
-                "timestamp": datetime.now().strftime("%H:%M")
-            })
-            
-            st.rerun()
