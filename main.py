@@ -14,21 +14,58 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Configuration class
-class Config:
-    COURSE_QDRANT_URL = st.secrets["COURSE_QDRANT_URL"]
-    COURSE_QDRANT_KEY = st.secrets["COURSE_QDRANT_KEY"]
-    COURSE_COLLECTION = st.secrets["COURSE_COLLECTION"]
-    COUNSELLING_QDRANT_URL = st.secrets["COUNSELLING_QDRANT_URL"]
-    COUNSELLING_QDRANT_KEY = st.secrets["COUNSELLING_QDRANT_KEY"]
-    COUNSELLING_COLLECTION = st.secrets["COUNSELLING_COLLECTION"]
-    GROQ_API_KEY = st.secrets["GROQ_API_KEY"]
+# Enhanced Configuration class with error handling
+try:
+    class Config:
+        @staticmethod
+        def get_secrets():
+            required_secrets = [
+                "COURSE_QDRANT_URL",
+                "COURSE_QDRANT_KEY",
+                "COURSE_COLLECTION",
+                "COUNSELLING_QDRANT_URL",
+                "COUNSELLING_QDRANT_KEY",
+                "COUNSELLING_COLLECTION",
+                "GROQ_API_KEY"
+            ]
+            
+            missing_secrets = []
+            secrets_dict = {}
+            
+            for secret in required_secrets:
+                value = st.secrets.get(secret)
+                if not value:
+                    missing_secrets.append(secret)
+                secrets_dict[secret] = value
+            
+            if missing_secrets:
+                st.error(f"Missing required secrets: {', '.join(missing_secrets)}")
+                st.stop()
+            
+            return secrets_dict
 
-# Initialize clients
-course_client = QdrantClient(url=Config.COURSE_QDRANT_URL, api_key=Config.COURSE_QDRANT_KEY)
-counselling_client = QdrantClient(url=Config.COUNSELLING_QDRANT_URL, api_key=Config.COUNSELLING_QDRANT_KEY)
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-groq_client = Groq(api_key=Config.GROQ_API_KEY)
+        secrets = get_secrets()
+        COURSE_QDRANT_URL = secrets["COURSE_QDRANT_URL"]
+        COURSE_QDRANT_KEY = secrets["COURSE_QDRANT_KEY"]
+        COURSE_COLLECTION = secrets["COURSE_COLLECTION"]
+        COUNSELLING_QDRANT_URL = secrets["COUNSELLING_QDRANT_URL"]
+        COUNSELLING_QDRANT_KEY = secrets["COUNSELLING_QDRANT_KEY"]
+        COUNSELLING_COLLECTION = secrets["COUNSELLING_COLLECTION"]
+        GROQ_API_KEY = secrets["GROQ_API_KEY"]
+
+except Exception as e:
+    st.error(f"Error initializing configuration: {str(e)}")
+    st.stop()
+
+# Initialize clients with error handling
+try:
+    course_client = QdrantClient(url=Config.COURSE_QDRANT_URL, api_key=Config.COURSE_QDRANT_KEY)
+    counselling_client = QdrantClient(url=Config.COUNSELLING_QDRANT_URL, api_key=Config.COUNSELLING_QDRANT_KEY)
+    embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+    groq_client = Groq(api_key=Config.GROQ_API_KEY)
+except Exception as e:
+    st.error(f"Error initializing clients: {str(e)}")
+    st.stop()
 
 # Custom CSS styling
 st.markdown(
@@ -83,7 +120,7 @@ st.markdown(
     unsafe_allow_html=True
 )
 
-# Helper functions
+# Helper functions with error handling
 def query_llm(context: str, user_query: str, system_role: str) -> str:
     """Query Groq LLM for structured responses."""
     try:
@@ -109,7 +146,7 @@ def query_llm(context: str, user_query: str, system_role: str) -> str:
         return f"I apologize, but I encountered an error: {str(e)}"
 
 def search_qdrant(client: QdrantClient, collection_name: str, query: str, limit: int = 3):
-    """Search resources in Qdrant."""
+    """Search resources in Qdrant with error handling."""
     try:
         query_vector = embedding_model.encode(query).tolist()
         hits = client.query_points(
@@ -151,6 +188,8 @@ with st.sidebar:
     st.markdown("### Navigation")
     rad = st.radio("", ["Home", "About Us", "COURSES OF STUDY", "BSW LINKS", "GUIDANCE AND COUNSELLING"])
 
+# Rest of your code remains the same...
+# [Include all the navigation handling code (Home, About Us, etc.) here exactly as it was before]
 # Navigation handling
 if rad == "GUIDANCE AND COUNSELLING":
     st.title("🤝 Guidance and Counselling")
