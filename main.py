@@ -1,5 +1,3 @@
-import os
-import warnings
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -7,12 +5,6 @@ from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from groq import Groq
 import json
-
-# Disable file watcher to avoid inotify watch limit issue
-os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
-
-# Suppress warnings
-warnings.filterwarnings('ignore', category=UserWarning)
 
 # Set page configuration
 st.set_page_config(
@@ -22,40 +14,18 @@ st.set_page_config(
     initial_sidebar_state="expanded"
 )
 
-# Initialize clients with proper error handling
-@st.cache_resource
-def init_qdrant():
-    try:
-        return QdrantClient(
-            url=st.secrets["QDRANT_URL"],
-            api_key=st.secrets["QDRANT_API_KEY"]
-        )
-    except Exception as e:
-        st.error(f"Failed to initialize Qdrant: {str(e)}")
-        return None
+# Configuration for search and chat
+qdrant_url = "https://7d9f7f14-94e0-46f5-b717-a4d42c3005a1.us-east4-0.gcp.cloud.qdrant.io"
+qdrant_api_key = "lderCoRfPpKc4FrG0ix50lw9gWgbjrEg8R7MpIe1zaZRT3yFKV67nA"
+groq_api_key = "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"
+collection_name = "my_books"
 
-@st.cache_resource
-def init_embedding_model():
-    try:
-        return SentenceTransformer('all-MiniLM-L6-v2')
-    except Exception as e:
-        st.error(f"Failed to initialize embedding model: {str(e)}")
-        return None
+# Initialize clients
+client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
+embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
+groq_client = Groq(api_key=groq_api_key)
 
-@st.cache_resource
-def init_groq():
-    try:
-        return Groq(api_key=st.secrets["GROQ_API_KEY"])
-    except Exception as e:
-        st.error(f"Failed to initialize Groq: {str(e)}")
-        return None
-
-# Initialize services
-client = init_qdrant()
-embedding_model = init_embedding_model()
-groq_client = init_groq()
-
-# Custom CSS remains the same
+# Custom CSS
 st.markdown("""
     <style>
     .main {
@@ -88,9 +58,6 @@ st.markdown("""
 
 def query_groq_llm(context: str, user_query: str) -> str:
     """Query Groq LLM with context and user query"""
-    if not groq_client:
-        return "I apologize, but the AI service is currently unavailable."
-    
     try:
         completion = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
@@ -117,14 +84,10 @@ def query_groq_llm(context: str, user_query: str) -> str:
 
 def search_courses(query: str):
     """Search courses in Qdrant and return results"""
-    if not all([client, embedding_model]):
-        st.error("Search services are currently unavailable.")
-        return None, None
-        
     try:
         query_vector = embedding_model.encode(query).tolist()
         hits = client.query_points(
-            collection_name=st.secrets["COLLECTION_NAME"],
+            collection_name=collection_name,
             query=query_vector,
             limit=3
         ).points
@@ -142,8 +105,6 @@ def search_courses(query: str):
     except Exception as e:
         st.error(f"Search error: {str(e)}")
         return None, None
-
-# Rest of your code remains the same...
 
 # Initialize session state for chat history
 if 'messages' not in st.session_state:
