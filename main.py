@@ -417,7 +417,7 @@ elif rad == "About Us":
    # [Previous code remains the same until the team section]
 
     # Team Section
-    st.markdown("### 👥 Meet Our Team")
+    # st.markdown("### 👥 Meet Our Team")
     
     # Adding custom CSS for team section
     st.markdown("""
