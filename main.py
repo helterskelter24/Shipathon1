@@ -554,9 +554,9 @@ elif rad == "BSW LINKS":
     st.title("🔍 GET TO KNOW ABOUT BSW WEBSITE")
 
     # Configuration for BSW LINKS
-    qdrant_url = "https://7d9f7f14-94e0-46f5-b717-a4d42c3005a1.us-east4-0.gcp.cloud.qdrant.io"
-    qdrant_api_key = "lderCoRfPpKc4FrG0ix50lw9gWgbjrEg8R7MpIe1zaZRT3yFKV67nA"
-    groq_api_key = "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"
+    qdrant_url = st.secrets["COURSE_QDRANT_URL"]
+    qdrant_api_key = st.secrets["COURSE_QDRANT_KEY"]
+    groq_api_key = st.secrets["GROQ_API_KEY"]
     collection_name = "APL_LINKS_APL"
 
     # Initialize clients
