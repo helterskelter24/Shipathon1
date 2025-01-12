@@ -15,9 +15,9 @@ st.set_page_config(
 )
 
 # Configuration for search and chat
-qdrant_url = "https://7d9f7f14-94e0-46f5-b717-a4d42c3005a1.us-east4-0.gcp.cloud.qdrant.io"
-qdrant_api_key = "lderCoRfPpKc4FrG0ix50lw9gWgbjrEg8R7MpIe1zaZRT3yFKV67nA"
-groq_api_key = "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"
+qdrant_url = st.secrets["QDRANT_URL"]
+qdrant_api_key = st.secrets["QDRANT_API_KEY"]
+groq_api_key = st.secrets["GROQ_API_KEY"]
 collection_name = "my_books"
 
 # Initialize clients
