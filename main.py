@@ -1,76 +1,28 @@
+import os
+import warnings
 import streamlit as st
+import pandas as pd
+from datetime import datetime
 from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from groq import Groq
 import json
-import os
-import warnings
 
 # Disable file watcher to avoid inotify watch limit issue
 os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
 
-# Suppress torch warnings
+# Suppress warnings
 warnings.filterwarnings('ignore', category=UserWarning)
-warnings.filterwarnings('ignore', message='.*torch.classes.*')
-# Page configuration
+
+# Set page configuration
 st.set_page_config(
-    page_title="Course Search - IITD",
-    page_icon="🔍",
+    page_title="IITD Buddy",
+    page_icon="🎓",
     layout="wide",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="expanded"
 )
 
-# Custom CSS remains the same
-st.markdown("""
-    <style>
-    .stApp {
-        max-width: 1200px;
-        margin: 0 auto;
-        font-family: 'Arial', sans-serif;
-    }
-    .main {
-        padding: 2rem;
-        color: #000000;
-    }
-    .stButton>button {
-        width: 100%;
-        background-color: #FF4B4B;
-        color: white;
-        border-radius: 5px;
-    }
-    .stTextInput>div>div>input {
-        border-radius: 5px;
-        color: #000000;
-    }
-    .stExpander {
-        background-color: #f0f2f6;
-        border-radius: 5px;
-        margin-bottom: 1rem;
-        color: #000000;
-    }
-    h1, h2, h3, h4, h5, h6, p {
-        color: #000000;
-    }
-    </style>
-    """, unsafe_allow_html=True)
-
-def check_secrets():
-    """Verify all required secrets are present."""
-    required_secrets = {
-        "QDRANT_URL": "Qdrant database URL",
-        "QDRANT_API_KEY": "Qdrant API key",
-        "GROQ_API_KEY": "Groq API key",
-        "COLLECTION_NAME": "Qdrant collection name"
-    }
-    
-    missing_secrets = []
-    for secret, description in required_secrets.items():
-        if secret not in st.secrets:
-            missing_secrets.append(f"{secret} ({description})")
-    
-    return missing_secrets
-
-# Initialize connection to Qdrant with proper error handling
+# Initialize clients with proper error handling
 @st.cache_resource
 def init_qdrant():
     try:
@@ -78,14 +30,10 @@ def init_qdrant():
             url=st.secrets["QDRANT_URL"],
             api_key=st.secrets["QDRANT_API_KEY"]
         )
-    except KeyError as e:
-        st.error(f"Missing required secret: {str(e)}")
-        return None
     except Exception as e:
         st.error(f"Failed to initialize Qdrant: {str(e)}")
         return None
 
-# Initialize Sentence Transformer
 @st.cache_resource
 def init_embedding_model():
     try:
@@ -94,146 +42,226 @@ def init_embedding_model():
         st.error(f"Failed to initialize embedding model: {str(e)}")
         return None
 
-# Initialize Groq client with proper error handling
 @st.cache_resource
 def init_groq():
     try:
         return Groq(api_key=st.secrets["GROQ_API_KEY"])
-    except KeyError as e:
-        st.error(f"Missing required secret: {str(e)}")
-        return None
     except Exception as e:
         st.error(f"Failed to initialize Groq: {str(e)}")
         return None
 
-def query_groq_llm(context: str, user_query: str, groq_client) -> str:
+# Initialize services
+client = init_qdrant()
+embedding_model = init_embedding_model()
+groq_client = init_groq()
+
+# Custom CSS remains the same
+st.markdown("""
+    <style>
+    .main {
+        padding: 2rem;
+    }
+    .stButton>button {
+        width: 100%;
+        border-radius: 10px;
+        height: 3em;
+    }
+    .chat-message {
+        padding: 1.5rem;
+        border-radius: 0.5rem;
+        margin-bottom: 1rem;
+        display: flex;
+        flex-direction: column;
+    }
+    .chat-message.user {
+        background-color: #e6f3ff;
+    }
+    .chat-message.assistant {
+        background-color: #f0f2f6;
+    }
+    .chat-message .timestamp {
+        font-size: 0.8rem;
+        color: #666;
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+def query_groq_llm(context: str, user_query: str) -> str:
+    """Query Groq LLM with context and user query"""
+    if not groq_client:
+        return "I apologize, but the AI service is currently unavailable."
+    
     try:
         completion = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
             messages=[
-                {"role": "system",
-                 "content": "You are a helpful academic advisor. Provide clear, concise information about courses based on the search results."},
+                {"role": "system", "content": """You are IITD Buddy, an AI assistant for IIT Delhi students. 
+                You help students with course-related queries and provide information about academics at IIT Delhi. 
+                Be concise, friendly, and accurate in your responses."""},
                 {"role": "user", "content": f"""
                 Based on the following course information and user query, provide a helpful response:
-
+                
                 Search Results:
                 {context}
-
+                
                 User Query: {user_query}
-
-                Please provide a clear, structured response addressing the query."""}
+                
+                Provide a clear, conversational response addressing the query."""}
             ],
             temperature=0.3,
             max_tokens=500
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"Error querying Groq LLM: {str(e)}"
+        return f"I apologize, but I encountered an error: {str(e)}"
 
-def display_course_card(hit, index):
+def search_courses(query: str):
+    """Search courses in Qdrant and return results"""
+    if not all([client, embedding_model]):
+        st.error("Search services are currently unavailable.")
+        return None, None
+        
+    try:
+        query_vector = embedding_model.encode(query).tolist()
+        hits = client.query_points(
+            collection_name=st.secrets["COLLECTION_NAME"],
+            query=query_vector,
+            limit=3
+        ).points
+        
+        if hits:
+            context = "\n\n".join([
+                f"Course: {hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}\n"
+                f"Credits: {json.dumps(hit.payload.get('credits', {}))}\n"
+                f"Prerequisites: {', '.join(hit.payload.get('prerequisites', []))}\n"
+                f"Description: {hit.payload.get('description', 'N/A')}"
+                for hit in hits
+            ])
+            return context, hits
+        return None, None
+    except Exception as e:
+        st.error(f"Search error: {str(e)}")
+        return None, None
+
+# Rest of your code remains the same...
+
+# Initialize session state for chat history
+if 'messages' not in st.session_state:
+    st.session_state.messages = []
+
+# Sidebar navigation
+with st.sidebar:
+    st.image("https://upload.wikimedia.org/wikipedia/en/6/6d/Indian_Institute_of_Technology_Delhi_Logo.png", width=150)
+    st.markdown("### Navigation")
+    rad = st.radio("", [
+        "Home",
+        "About Us",
+        "COURSES OF STUDY",
+        "BSW LINKS",
+        "GUIDANCE AND COUNSELLING"
+    ])
+
+# Main content area
+if rad == "COURSES OF STUDY":
+    st.title("📖 Course Search and Information")
+    
+    # Course search interface
+    st.markdown("""
+    ### 🔍 Intelligent Course Search
+    Enter your query about courses - ask about prerequisites, content, or get recommendations!
+    """)
+    
+    with st.form("query_form"):
+        user_query = st.text_input("What would you like to know about courses?")
+        col1, col2, col3 = st.columns([1, 1, 1])
+        with col2:
+            submitted = st.form_submit_button("Search 🔍", use_container_width=True)
+        
+        if submitted and user_query:
+            context, hits = search_courses(user_query)
+            if context and hits:
+                llm_response = query_groq_llm(context, user_query)
+                st.markdown("### 🤖 AI Response")
+                st.markdown(f"""
+                <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
+                    {llm_response}
+                </div>
+                """, unsafe_allow_html=True)
+                
+                st.markdown("### 📚 Related Courses")
+                for hit in hits:
+                    with st.expander(f"📘 {hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}"):
+                        st.markdown(f"""
+                        * *Credits:* {json.dumps(hit.payload.get('credits', {}))}
+                        * *Prerequisites:* {', '.join(hit.payload.get('prerequisites', []))}
+                        
+                        *Description:*
+                        {hit.payload.get('description', 'N/A')}
+                        """)
+
+elif rad == "Home":
+    st.title("🏠 Welcome to IITD Buddy")
+    st.markdown("""
+    <div style='background-color: #f8f9fa; padding: 20px; border-radius: 10px;'>
+        <h3>Your AI-Powered Academic Assistant</h3>
+        <p>Get instant answers about courses, academic policies, and more!</p>
+    </div>
+    """, unsafe_allow_html=True)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.markdown("### 📚 Course Information")
+        st.info("Get detailed course information and prerequisites")
+    with col2:
+        st.markdown("### 🤖 AI Assistant")
+        st.info("Chat with our AI for instant academic guidance")
+    with col3:
+        st.markdown("### 📋 Resources")
+        st.info("Access important links and documents")
+
+else:
+    # Other sections remain the same as before
+    st.title(f"📑 {rad}")
+    st.markdown("Content coming soon...")
+
+# AI Chatbot (present on all pages)
+st.markdown("---")
+st.markdown("### 🤖 Chat with IITD Buddy")
+
+# Display chat messages
+for message in st.session_state.messages:
     with st.container():
         st.markdown(f"""
-        <div style="
-            padding: 1rem;
-            border-radius: 5px;
-            background-color: white;
-            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-            margin-bottom: 1rem;
-            color: #000000;
-        ">
-            <h4 style="color: #000000; margin: 0;">{hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}</h4>
-            <p style="color: #000000; font-size: 0.9rem;">Score: {hit.score:.3f}</p>
-            <p style="color: #000000;"><strong>Credits:</strong> {json.dumps(hit.payload.get('credits', {}))}</p>
-            <p style="color: #000000;"><strong>Prerequisites:</strong> {', '.join(hit.payload.get('prerequisites', []))}</p>
-            <p style="color: #000000;"><strong>Description:</strong> {hit.payload.get('description', 'N/A')}</p>
+        <div class="chat-message {message['role']}">
+            <div class="timestamp">{message['timestamp']}</div>
+            {message['content']}
         </div>
         """, unsafe_allow_html=True)
 
-def main():
-    st.title("🔍 Enhanced Course Search")
-    
-    # Check for missing secrets first
-    missing_secrets = check_secrets()
-    if missing_secrets:
-        st.error("Missing required secrets:")
-        for secret in missing_secrets:
-            st.write(f"❌ {secret}")
-        st.info("Please add these secrets in your Streamlit Cloud dashboard or .streamlit/secrets.toml file.")
-        return
-    
-    # Initialize services
-    with st.spinner("Initializing services..."):
-        qdrant_client = init_qdrant()
-        embedding_model = init_embedding_model()
-        groq_client = init_groq()
-
-        if not all([qdrant_client, embedding_model, groq_client]):
-            st.error("Failed to initialize one or more services. Please check the logs above.")
-            return
-
-    st.markdown("""
-    <p style="color: #000000;">
-    Welcome to the Course Search platform! Enter your query about courses below to get detailed information 
-    and personalized recommendations from our AI advisor.
-    </p>
-    """, unsafe_allow_html=True)
-
-    # Search interface
-    with st.form("query_form", clear_on_submit=False):
-        col1, col2 = st.columns([4, 1])
-        with col1:
-            user_query = st.text_input("Enter your query about courses:",
-                                     placeholder="e.g., What are the prerequisites for Machine Learning courses?")
-        with col2:
-            submitted = st.form_submit_button("🔍 Search", use_container_width=True)
-
-        if submitted and user_query:
-            try:
-                # Convert query to vector
-                query_vector = embedding_model.encode(user_query).tolist()
-
-                # Search Qdrant using the collection name from secrets
-                hits = qdrant_client.query_points(
-                    collection_name=st.secrets["COLLECTION_NAME"],
-                    query=query_vector,
-                    limit=3
-                ).points
-
-                if hits:
-                    # Format context from search results
-                    context = "\n\n".join([
-                        f"Course: {hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}\n"
-                        f"Credits: {json.dumps(hit.payload.get('credits', {}))}\n"
-                        f"Prerequisites: {', '.join(hit.payload.get('prerequisites', []))}\n"
-                        f"Description: {hit.payload.get('description', 'N/A')}"
-                        for hit in hits
-                    ])
-
-                    # Get LLM response
-                    with st.spinner("🤔 Analyzing your query..."):
-                        llm_response = query_groq_llm(context, user_query, groq_client)
-                        st.markdown("### 🤖 AI Advisor Response")
-                        st.markdown(f"""
-                        <div style="
-                            padding: 1.5rem;
-                            border-radius: 5px;
-                            background-color: #f8f9fa;
-                            border-left: 5px solid #FF4B4B;
-                            margin: 1rem 0;
-                            color: #000000;
-                        ">
-                            {llm_response}
-                        </div>
-                        """, unsafe_allow_html=True)
-
-                    st.markdown('<h3 style="color: #000000;">📚 Detailed Search Results</h3>', unsafe_allow_html=True)
-                    for i, hit in enumerate(hits, 1):
-                        display_course_card(hit, i)
-                else:
-                    st.warning("No results found for your query. Try rephrasing or using different keywords.")
-
-            except Exception as e:
-                st.error(f"Error during search: {str(e)}")
-
-if __name__ == "__main__":
-    main()
+# Chat input
+with st.form("chat_input_form", clear_on_submit=True):
+    chat_input = st.text_input("Ask me anything about courses and academics:", key="chat_input")
+    if st.form_submit_button("Send", use_container_width=True):
+        if chat_input:
+            # Add user message to chat
+            st.session_state.messages.append({
+                "role": "user",
+                "content": chat_input,
+                "timestamp": datetime.now().strftime("%H:%M")
+            })
+            
+            # Search courses and get AI response
+            context, _ = search_courses(chat_input)
+            if context:
+                ai_response = query_groq_llm(context, chat_input)
+            else:
+                ai_response = "I apologize, but I couldn't find specific course information for your query. Could you please rephrase or ask something else?"
+            
+            # Add AI response to chat
+            st.session_state.messages.append({
+                "role": "assistant",
+                "content": ai_response,
+                "timestamp": datetime.now().strftime("%H:%M")
+            })
+            
+            st.rerun()
