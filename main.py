@@ -225,4 +225,4 @@ with st.form("chat_input_form", clear_on_submit=True):
                 "timestamp": datetime.now().strftime("%H:%M")
             })
             
-            st.rerun()
+            st.rerun()  # Make sure this line uses the same indentation type (spaces) as above
