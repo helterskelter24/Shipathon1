@@ -408,7 +408,7 @@ elif rad == "About Us":
             <p>Role: Developer</p>
         </div>
         <div class="team-member">
-            <h3>👤 Aaditya Meher</h3>
+            <h3>👤 Aaditya Mehar</h3>
             <p>Role: Developer</p>
         </div>
         <div class="team-member">
@@ -552,7 +552,6 @@ elif rad == "COURSES OF STUDY":
 
 elif rad == "BSW LINKS":
     st.title("🔍 GET TO KNOW ABOUT BSW WEBSITE")
-
     # Configuration for BSW LINKS
     qdrant_url = st.secrets["COURSE_QDRANT_URL"]
     qdrant_api_key = st.secrets["COURSE_QDRANT_KEY"]
