@@ -4,9 +4,14 @@ from sentence_transformers import SentenceTransformer
 from groq import Groq
 import json
 import os
+import warnings
 
 # Disable file watcher to avoid inotify watch limit issue
 os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
+
+# Suppress torch warnings
+warnings.filterwarnings('ignore', category=UserWarning)
+warnings.filterwarnings('ignore', message='.*torch.classes.*')
 # Page configuration
 st.set_page_config(
     page_title="Course Search - IITD",
