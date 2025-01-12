@@ -3,7 +3,10 @@ from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from groq import Groq
 import json
+import os
 
+# Disable file watcher to avoid inotify watch limit issue
+os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
 # Page configuration
 st.set_page_config(
     page_title="Course Search - IITD",
