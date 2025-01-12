@@ -1,3 +1,7 @@
+import os
+# Set Streamlit configuration before importing streamlit
+os.environ['STREAMLIT_SERVER_FILE_WATCHER_TYPE'] = 'none'
+
 import streamlit as st
 import pandas as pd
 from datetime import datetime
@@ -5,25 +9,59 @@ from qdrant_client import QdrantClient
 from sentence_transformers import SentenceTransformer
 from groq import Groq
 import json
+import logging
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Set page configuration
-st.set_page_config(
-    page_title="IITD Buddy",
-    page_icon="🎓",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
+try:
+    st.set_page_config(
+        page_title="IITD Buddy",
+        page_icon="🎓",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+except Exception as e:
+    logger.error(f"Failed to set page config: {e}")
 
-# Configuration for search and chat
-qdrant_url = st.secrets["QDRANT_URL"]
-qdrant_api_key = st.secrets["QDRANT_API_KEY"]
-groq_api_key = st.secrets["GROQ_API_KEY"]
-collection_name = "my_books"
+# Initialize clients with proper error handling
+@st.cache_resource
+def init_qdrant():
+    try:
+        url = st.secrets["QDRANT_URL"]
+        api_key = st.secrets["QDRANT_API_KEY"]
+        return QdrantClient(url=url, api_key=api_key)
+    except Exception as e:
+        logger.error(f"Failed to initialize Qdrant: {e}")
+        st.error("Failed to initialize search service. Please check your configuration.")
+        return None
 
-# Initialize clients
-client = QdrantClient(url=qdrant_url, api_key=qdrant_api_key)
-embedding_model = SentenceTransformer('all-MiniLM-L6-v2')
-groq_client = Groq(api_key=groq_api_key)
+@st.cache_resource
+def init_embedding_model():
+    try:
+        return SentenceTransformer('all-MiniLM-L6-v2')
+    except Exception as e:
+        logger.error(f"Failed to initialize embedding model: {e}")
+        st.error("Failed to initialize embedding service. Please check your configuration.")
+        return None
+
+@st.cache_resource
+def init_groq():
+    try:
+        api_key = st.secrets["GROQ_API_KEY"]
+        return Groq(api_key=api_key)
+    except Exception as e:
+        logger.error(f"Failed to initialize Groq: {e}")
+        st.error("Failed to initialize AI service. Please check your configuration.")
+        return None
+
+# Initialize services
+client = init_qdrant()
+embedding_model = init_embedding_model()
+groq_client = init_groq()
+COLLECTION_NAME = st.secrets.get("COLLECTION_NAME", "my_books")
 
 # Custom CSS
 st.markdown("""
@@ -58,6 +96,9 @@ st.markdown("""
 
 def query_groq_llm(context: str, user_query: str) -> str:
     """Query Groq LLM with context and user query"""
+    if not groq_client:
+        return "AI service is currently unavailable. Please try again later."
+    
     try:
         completion = groq_client.chat.completions.create(
             model="mixtral-8x7b-32768",
@@ -80,14 +121,19 @@ def query_groq_llm(context: str, user_query: str) -> str:
         )
         return completion.choices[0].message.content
     except Exception as e:
-        return f"I apologize, but I encountered an error: {str(e)}"
+        logger.error(f"Groq query error: {e}")
+        return "I encountered an error processing your request. Please try again."
 
 def search_courses(query: str):
     """Search courses in Qdrant and return results"""
+    if not all([client, embedding_model]):
+        logger.error("Search services unavailable")
+        return None, None
+        
     try:
         query_vector = embedding_model.encode(query).tolist()
         hits = client.query_points(
-            collection_name=collection_name,
+            collection_name=COLLECTION_NAME,
             query=query_vector,
             limit=3
         ).points
@@ -103,7 +149,7 @@ def search_courses(query: str):
             return context, hits
         return None, None
     except Exception as e:
-        st.error(f"Search error: {str(e)}")
+        logger.error(f"Search error: {e}")
         return None, None
 
 # Initialize session state for chat history
@@ -153,11 +199,9 @@ if rad == "COURSES OF STUDY":
                 for hit in hits:
                     with st.expander(f"📘 {hit.payload['course_code']} - {hit.payload.get('title', 'N/A')}"):
                         st.markdown(f"""
-                        * *Credits:* {json.dumps(hit.payload.get('credits', {}))}
-                        * *Prerequisites:* {', '.join(hit.payload.get('prerequisites', []))}
-                        
-                        *Description:*
-                        {hit.payload.get('description', 'N/A')}
+                        * *Credits:* {json.dumps(hit.payload.get('credits', {}))}\n
+                        * *Prerequisites:* {', '.join(hit.payload.get('prerequisites', []))}\n
+                        \n*Description:*\n{hit.payload.get('description', 'N/A')}
                         """)
 
 elif rad == "Home":
@@ -181,7 +225,6 @@ elif rad == "Home":
         st.info("Access important links and documents")
 
 else:
-    # Other sections remain the same as before
     st.title(f"📑 {rad}")
     st.markdown("Content coming soon...")
 
@@ -225,4 +268,4 @@ with st.form("chat_input_form", clear_on_submit=True):
                 "timestamp": datetime.now().strftime("%H:%M")
             })
             
-            st.rerun()  # Make sure this line uses the same indentation type (spaces) as above
+            st.rerun()
